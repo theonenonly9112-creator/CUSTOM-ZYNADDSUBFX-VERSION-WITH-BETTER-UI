@@ -16,18 +16,58 @@ jobs:
           msystem: MINGW32
           update: true
           install: >-
-            mingw-w64-i686-toolchain
-            mingw-w64-i686-cmake
-            mingw-w64-i686-ninja
-            mingw-w64-i686-fftw
-            mingw-w64-i686-mxml
-            mingw-w64-i686-zlib
-            mingw-w64-i686-liblo
-            mingw-w64-i686-portaudio
-            mingw-w64-i686-fltk
+            base-devel
+            curl
             tar
             bzip2
             zip
+            mingw-w64-i686-toolchain
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+            mingw-w64-i686-zlib
+            mingw-w64-i686-portaudio
+            mingw-w64-i686-pkgconf
+      - name: Build fftw
+        run: |
+          mkdir -p $HOME/deps && cd $HOME/deps
+          curl -fLO https://www.fftw.org/fftw-3.3.10.tar.gz
+          tar xzf fftw-3.3.10.tar.gz && cd fftw-3.3.10
+          ./configure --prefix=/mingw32 --enable-shared --disable-static --with-our-malloc --disable-fortran
+          make -j4 && make install
+      - name: Build mxml
+        run: |
+          cd $HOME/deps
+          curl -fLO https://github.com/michaelrsweet/mxml/releases/download/v2.12/mxml-2.12.tar.gz
+          tar xzf mxml-2.12.tar.gz && cd mxml-2.12
+          ./configure --prefix=/mingw32 --disable-shared
+          make libmxml.a
+          cp mxml.h /mingw32/include/
+          cp libmxml.a /mingw32/lib/
+          mkdir -p /mingw32/lib/pkgconfig
+          cat > /mingw32/lib/pkgconfig/mxml.pc <<PCEOF
+          prefix=/mingw32
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include
+          Name: mxml
+          Description: Mini-XML library
+          Version: 2.12
+          Libs: -L\${libdir} -lmxml
+          Cflags: -I\${includedir}
+          PCEOF
+      - name: Build liblo
+        run: |
+          cd $HOME/deps
+          curl -fLO https://github.com/radarsat1/liblo/releases/download/0.32/liblo-0.32.tar.gz
+          tar xzf liblo-0.32.tar.gz && cd liblo-0.32
+          ./configure --prefix=/mingw32 --enable-shared --disable-static --disable-tests --disable-examples --disable-tools
+          make -j4 && make install
+      - name: Build fltk
+        run: |
+          cd $HOME/deps
+          curl -fLO https://www.fltk.org/pub/fltk/1.3.9/fltk-1.3.9-source.tar.gz
+          tar xzf fltk-1.3.9-source.tar.gz && cd fltk-1.3.9
+          ./configure --prefix=/mingw32 --disable-gl
+          make -j4 && make install
       - name: Unpack source
         run: |
           tar xjf zynaddsubfx-3.0.3-bluegreen-theme.tar.bz2
@@ -44,7 +84,7 @@ jobs:
       - name: Collect files
         run: |
           mkdir out
-          cp zynaddsubfx-3.0.3/build/src/zynaddsubfx.exe out/
+          cp "$(find zynaddsubfx-3.0.3/build -name zynaddsubfx.exe | head -n 1)" out/
           for d in $(ldd out/zynaddsubfx.exe | grep -i mingw32 | awk '{print $3}'); do cp "$d" out/; done
           cp -r zynaddsubfx-3.0.3/instruments out/ || true
           cp -r zynaddsubfx-3.0.3/pixmaps out/ || true
