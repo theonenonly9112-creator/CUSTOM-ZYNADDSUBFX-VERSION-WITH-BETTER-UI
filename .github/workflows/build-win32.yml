@@ -77,6 +77,8 @@ jobs:
           sed -i 's|COMMAND ${FLTK_CONFIG} --use-images --ldflags|COMMAND sh ${FLTK_CONFIG} --use-images --ldflags|' src/CMakeLists.txt
           sed -i 's|string(STRIP ${FLTK_LDFLAGS} FLTK_LIBRARIES)|if(NOT FLTK_LDFLAGS)\n\t\t\tset(FLTK_LDFLAGS "-mwindows -lfltk_images -lfltk_png -lfltk_z -lfltk_jpeg -lfltk -lole32 -luuid -lcomctl32 -lwsock32 -lm -lgdi32 -lcomdlg32")\n\t\tendif()\n\t\tstring(STRIP "${FLTK_LDFLAGS}" FLTK_LIBRARIES)|' src/CMakeLists.txt
           sed -n 363,375p src/CMakeLists.txt
+          sed -i '/^decl {\\#include "WidgetPDial.h"} {public local$/i decl {\\#include <FL/x.H>} {private local\n} \n' src/UI/MasterUI.fl
+          grep -n -B1 -A2 "FL/x.H" src/UI/MasterUI.fl
       - name: Configure
         run: |
           cd zynaddsubfx-3.0.3
@@ -87,7 +89,17 @@ jobs:
             -DGuiModule=fltk -DPaEnable=ON \
             -DJackEnable=OFF -DAlsaEnable=OFF -DOssEnable=OFF
       - name: Build
-        run: cd zynaddsubfx-3.0.3/build && ninja
+        run: |
+          cd zynaddsubfx-3.0.3/build
+          set +e
+          ninja -k 0 > ../../build.log 2>&1
+          STATUS=$?
+          echo "================ ERROR SUMMARY (scroll here) ================"
+          grep -n -E "error:|FAILED:|undefined reference|fatal error" ../../build.log | head -40
+          echo "================ LAST 15 LINES ================"
+          tail -n 15 ../../build.log
+          echo "ninja exit code: $STATUS"
+          exit $STATUS
       - name: Collect files
         run: |
           mkdir out
