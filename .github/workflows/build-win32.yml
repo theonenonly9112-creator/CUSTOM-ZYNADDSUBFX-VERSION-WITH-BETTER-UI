@@ -81,6 +81,11 @@ jobs:
           grep -n -B1 -A1 "fl_open_display" src/UI/MasterUI.fl
           sed -i 's/\bindex(/strchr(/g' src/UI/Fl_Osc_Tree.H
           grep -n "strchr(" src/UI/Fl_Osc_Tree.H
+          sed -i 's|o->color( FL_CYAN );|o->color( fl_rgb_color(12, 52, 40) );|' src/UI/guimain.cpp
+          sed -i 's|^    Fl::add_handler(kb_shortcut_handler);$|    Fl::background(14, 18, 24);\n    Fl::background2(22, 30, 40);\n    Fl::foreground(215, 240, 230);\n    Fl::set_color(FL_SELECTION_COLOR, 0, 200, 110);\n    Fl::add_handler(kb_shortcut_handler);|' src/UI/guimain.cpp
+          sed -i 's|pdialcolor(10, 14, 20);|pdialcolor(6, 24, 14);|; s|fl_color(20, 90, 160);|fl_color(30, 150, 80);|; s|pdialcolor(25, 35, 48);|pdialcolor(16, 84, 48);|; s|pdialcolor(12, 18, 26);|pdialcolor(22, 110, 64);|; s|pdialcolor(80, 170, 255);|pdialcolor(200, 255, 220);|' src/UI/WidgetPDial.cpp
+          grep -n "fl_rgb_color(12\|Fl::background(14" src/UI/guimain.cpp
+          grep -n "pdialcolor(\|fl_color(30" src/UI/WidgetPDial.cpp | head -8
           sed -i 's|^        middleware->tick();$|#if defined(WIN32) \&\& !defined(ZEST_GUI)\n        if(!noui) GUI::tickUi(gui);\n#endif\n        middleware->tick();|' src/main.cpp
           sed -n 715,730p src/main.cpp
       - name: Configure
