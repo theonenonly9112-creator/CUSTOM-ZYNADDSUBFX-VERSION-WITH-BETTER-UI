@@ -81,6 +81,10 @@ jobs:
           grep -n -B1 -A1 "fl_open_display" src/UI/MasterUI.fl
           sed -i 's/\bindex(/strchr(/g' src/UI/Fl_Osc_Tree.H
           grep -n "strchr(" src/UI/Fl_Osc_Tree.H
+          sed -i 's|^GUI::ui_handle_t gui;$|GUI::ui_handle_t gui;\nstatic int dbgn = 0;|' src/main.cpp
+          sed -i 's|^        GUI::tickUi(gui);$|        if(dbgn<8) {printf("[DBG] loop %d: before ui\\n", dbgn); fflush(stdout);}\n        GUI::tickUi(gui);\n        if(dbgn<8) {printf("[DBG] after ui\\n"); fflush(stdout);}|' src/main.cpp
+          sed -i 's|^        middleware->tick();$|        middleware->tick();\n        if(dbgn<8) {printf("[DBG] after middleware\\n"); fflush(stdout); dbgn++;}|' src/main.cpp
+          grep -n "DBG" src/main.cpp
       - name: Configure
         run: |
           cd zynaddsubfx-3.0.3
