@@ -117,17 +117,31 @@ jobs:
           exit $STATUS
       - name: Collect files
         run: |
-          mkdir out
-          cp "$(find zynaddsubfx-3.0.3/build -name zynaddsubfx.exe | head -n 1)" out/
-          for d in $(ldd out/zynaddsubfx.exe | grep -i mingw32 | awk '{print $3}'); do cp "$d" out/; done
+          mkdir -p out
+          # copy every non-system DLL a file needs (and what those DLLs need)
+          copydeps() {
+            local file="$1" dest="$2"
+            for dll in $(objdump -p "$file" | grep "DLL Name" | awk '{print $3}'); do
+              if [ -f "/mingw32/bin/$dll" ] && [ ! -f "$dest/$dll" ]; then
+                cp "/mingw32/bin/$dll" "$dest/"
+                echo "bundled $dll"
+                copydeps "/mingw32/bin/$dll" "$dest"
+              fi
+            done
+          }
+          EXE=$(find zynaddsubfx-3.0.3/build -name zynaddsubfx.exe | head -n 1)
+          cp "$EXE" out/
+          copydeps out/zynaddsubfx.exe out
           VST=$(find zynaddsubfx-3.0.3/build -name ZynAddSubFX.dll | head -n 1)
           if [ -n "$VST" ]; then
             mkdir -p out/vst
             cp "$VST" out/vst/
-            for d in $(ldd "$VST" | grep -i mingw32 | awk '{print $3}'); do cp "$d" out/vst/; done
+            copydeps out/vst/ZynAddSubFX.dll out/vst
           fi
           cp -r zynaddsubfx-3.0.3/instruments out/ || true
           cp -r zynaddsubfx-3.0.3/pixmaps out/ || true
+          echo "===== FILES IN ZIP ====="
+          ls -R out | head -n 60
           cd out && zip -r ../zynaddsubfx-win32.zip .
       - uses: actions/upload-artifact@v4
         if: always()
