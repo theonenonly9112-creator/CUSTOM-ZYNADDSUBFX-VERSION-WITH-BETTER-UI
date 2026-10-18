@@ -77,8 +77,10 @@ jobs:
           sed -i 's|COMMAND ${FLTK_CONFIG} --use-images --ldflags|COMMAND sh ${FLTK_CONFIG} --use-images --ldflags|' src/CMakeLists.txt
           sed -i 's|string(STRIP ${FLTK_LDFLAGS} FLTK_LIBRARIES)|if(NOT FLTK_LDFLAGS)\n\t\t\tset(FLTK_LDFLAGS "-mwindows -lfltk_images -lfltk_png -lfltk_z -lfltk_jpeg -lfltk -lole32 -luuid -lcomctl32 -lwsock32 -lm -lgdi32 -lcomdlg32")\n\t\tendif()\n\t\tstring(STRIP "${FLTK_LDFLAGS}" FLTK_LIBRARIES)|' src/CMakeLists.txt
           sed -n 363,375p src/CMakeLists.txt
-          sed -i '/^decl {\\#include "WidgetPDial.h"} {public local$/i decl {\\#include <FL/x.H>} {private local\n} \n' src/UI/MasterUI.fl
-          grep -n -B1 -A2 "FL/x.H" src/UI/MasterUI.fl
+          sed -i 's|^fl_open_display();$|\\#ifndef _WIN32\nfl_open_display();\n\\#endif|' src/UI/MasterUI.fl
+          grep -n -B1 -A1 "fl_open_display" src/UI/MasterUI.fl
+          sed -i 's/\bindex(/strchr(/g' src/UI/Fl_Osc_Tree.H
+          grep -n "strchr(" src/UI/Fl_Osc_Tree.H
       - name: Configure
         run: |
           cd zynaddsubfx-3.0.3
@@ -88,11 +90,11 @@ jobs:
             -DCMAKE_CXX_FLAGS="-include cstdint" \
             -DGuiModule=fltk -DPaEnable=ON \
             -DJackEnable=OFF -DAlsaEnable=OFF -DOssEnable=OFF
-      - name: Build
+      - name: Build standalone exe
         run: |
           cd zynaddsubfx-3.0.3/build
           set +e
-          ninja -k 0 > ../../build.log 2>&1
+          ninja -k 0 zynaddsubfx > ../../build.log 2>&1
           STATUS=$?
           echo "================ ERROR SUMMARY (scroll here) ================"
           grep -n -E "error:|FAILED:|undefined reference|fatal error" ../../build.log | head -40
@@ -100,11 +102,30 @@ jobs:
           tail -n 15 ../../build.log
           echo "ninja exit code: $STATUS"
           exit $STATUS
+      - name: Build VST (optional)
+        continue-on-error: true
+        run: |
+          cd zynaddsubfx-3.0.3/build
+          set +e
+          ninja -k 0 ZynAddSubFX_vst > ../../build-vst.log 2>&1
+          STATUS=$?
+          echo "================ VST ERROR SUMMARY ================"
+          grep -n -E "error:|FAILED:|undefined reference|fatal error" ../../build-vst.log | head -40
+          echo "================ LAST 15 LINES ================"
+          tail -n 15 ../../build-vst.log
+          echo "ninja exit code: $STATUS"
+          exit $STATUS
       - name: Collect files
         run: |
           mkdir out
           cp "$(find zynaddsubfx-3.0.3/build -name zynaddsubfx.exe | head -n 1)" out/
           for d in $(ldd out/zynaddsubfx.exe | grep -i mingw32 | awk '{print $3}'); do cp "$d" out/; done
+          VST=$(find zynaddsubfx-3.0.3/build -name ZynAddSubFX.dll | head -n 1)
+          if [ -n "$VST" ]; then
+            mkdir -p out/vst
+            cp "$VST" out/vst/
+            for d in $(ldd "$VST" | grep -i mingw32 | awk '{print $3}'); do cp "$d" out/vst/; done
+          fi
           cp -r zynaddsubfx-3.0.3/instruments out/ || true
           cp -r zynaddsubfx-3.0.3/pixmaps out/ || true
           cd out && zip -r ../zynaddsubfx-win32.zip .
