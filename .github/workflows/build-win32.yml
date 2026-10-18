@@ -79,6 +79,7 @@ jobs:
           cd zynaddsubfx-3.0.3
           mkdir build && cd build
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DGuiModule=fltk -DPaEnable=ON \
             -DJackEnable=OFF -DAlsaEnable=OFF -DOssEnable=OFF
       - name: Build
