@@ -39,7 +39,7 @@ jobs:
           cd $HOME/deps
           curl -fLO https://github.com/michaelrsweet/mxml/releases/download/v2.12/mxml-2.12.tar.gz
           tar xzf mxml-2.12.tar.gz && cd mxml-2.12
-          ./configure --prefix=/mingw32 --disable-shared
+          CFLAGS="-include io.h -Wno-error=implicit-function-declaration" ./configure --prefix=/mingw32 --disable-shared
           make libmxml.a
           cp mxml.h /mingw32/include/
           cp libmxml.a /mingw32/lib/
@@ -55,6 +55,8 @@ jobs:
           Cflags: -I\${includedir}
           PCEOF
       - name: Build liblo
+        env:
+          CFLAGS: -O2 -Wno-error=implicit-function-declaration -Wno-error=int-conversion
         run: |
           cd $HOME/deps
           curl -fLO https://github.com/radarsat1/liblo/releases/download/0.32/liblo-0.32.tar.gz
