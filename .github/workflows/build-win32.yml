@@ -1,0 +1,56 @@
+name: Build Windows 32-bit
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: >-
+            mingw-w64-i686-toolchain
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+            mingw-w64-i686-fftw
+            mingw-w64-i686-mxml
+            mingw-w64-i686-zlib
+            mingw-w64-i686-liblo
+            mingw-w64-i686-portaudio
+            mingw-w64-i686-fltk
+            tar
+            bzip2
+            zip
+      - name: Unpack source
+        run: |
+          tar xjf zynaddsubfx-3.0.3-bluegreen-theme.tar.bz2
+          ls
+      - name: Configure
+        run: |
+          cd zynaddsubfx-3.0.3
+          mkdir build && cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DGuiModule=fltk -DPaEnable=ON \
+            -DJackEnable=OFF -DAlsaEnable=OFF -DOssEnable=OFF
+      - name: Build
+        run: cd zynaddsubfx-3.0.3/build && ninja
+      - name: Collect files
+        run: |
+          mkdir out
+          cp zynaddsubfx-3.0.3/build/src/zynaddsubfx.exe out/
+          for d in $(ldd out/zynaddsubfx.exe | grep -i mingw32 | awk '{print $3}'); do cp "$d" out/; done
+          cp -r zynaddsubfx-3.0.3/instruments out/ || true
+          cp -r zynaddsubfx-3.0.3/pixmaps out/ || true
+          cd out && zip -r ../zynaddsubfx-win32.zip .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zynaddsubfx-win32
+          path: zynaddsubfx-win32.zip
