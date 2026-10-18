@@ -73,7 +73,10 @@ jobs:
       - name: Unpack source
         run: |
           tar xjf zynaddsubfx-3.0.3-bluegreen-theme.tar.bz2
-          ls
+          cd zynaddsubfx-3.0.3
+          sed -i 's|COMMAND ${FLTK_CONFIG} --use-images --ldflags|COMMAND sh ${FLTK_CONFIG} --use-images --ldflags|' src/CMakeLists.txt
+          sed -i 's|string(STRIP ${FLTK_LDFLAGS} FLTK_LIBRARIES)|if(NOT FLTK_LDFLAGS)\n\t\t\tset(FLTK_LDFLAGS "-mwindows -lfltk_images -lfltk_png -lfltk_z -lfltk_jpeg -lfltk -lole32 -luuid -lcomctl32 -lwsock32 -lm -lgdi32 -lcomdlg32")\n\t\tendif()\n\t\tstring(STRIP "${FLTK_LDFLAGS}" FLTK_LIBRARIES)|' src/CMakeLists.txt
+          sed -n 363,375p src/CMakeLists.txt
       - name: Configure
         run: |
           cd zynaddsubfx-3.0.3
