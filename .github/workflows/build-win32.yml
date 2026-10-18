@@ -83,6 +83,7 @@ jobs:
           mkdir build && cd build
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_FLAGS="-include cstdint" \
             -DGuiModule=fltk -DPaEnable=ON \
             -DJackEnable=OFF -DAlsaEnable=OFF -DOssEnable=OFF
       - name: Build
