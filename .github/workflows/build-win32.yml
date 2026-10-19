@@ -81,6 +81,85 @@ jobs:
           grep -n -B1 -A1 "fl_open_display" src/UI/MasterUI.fl
           sed -i 's/\bindex(/strchr(/g' src/UI/Fl_Osc_Tree.H
           grep -n "strchr(" src/UI/Fl_Osc_Tree.H
+          cat > src/crashreport.h <<'CRASHEOF'
+          #pragma once
+          #ifdef WIN32
+          #include <windows.h>
+          #include <dbghelp.h>
+          #include <stdio.h>
+          #include <string.h>
+
+          typedef BOOL    (WINAPI *zyn_SymInitialize_t)(HANDLE, const char *, BOOL);
+          typedef BOOL    (WINAPI *zyn_SymFromAddr_t)(HANDLE, DWORD64, DWORD64 *, SYMBOL_INFO *);
+          typedef BOOL    (WINAPI *zyn_StackWalk64_t)(DWORD, HANDLE, HANDLE, void *, void *,
+                                                      void *, void *, void *, void *);
+          typedef DWORD   (WINAPI *zyn_SymSetOptions_t)(DWORD);
+          typedef void *  (WINAPI *zyn_SymFunctionTableAccess64_t)(HANDLE, DWORD64);
+          typedef DWORD64 (WINAPI *zyn_SymGetModuleBase64_t)(HANDLE, DWORD64);
+
+          static LONG WINAPI zyn_crash_handler(EXCEPTION_POINTERS *ep)
+          {
+              unsigned long base = (unsigned long)GetModuleHandle(NULL);
+              unsigned long addr = (unsigned long)ep->ExceptionRecord->ExceptionAddress;
+              fprintf(stderr, "\n[CRASH] exception code 0x%08lX at 0x%08lX (exe base 0x%08lX, offset 0x%lX)\n",
+                      (unsigned long)ep->ExceptionRecord->ExceptionCode, addr, base, addr - base);
+              HMODULE dh = LoadLibraryA("dbghelp.dll");
+              if(dh) {
+                  zyn_SymInitialize_t pSymInitialize = (zyn_SymInitialize_t)GetProcAddress(dh, "SymInitialize");
+                  zyn_SymFromAddr_t pSymFromAddr = (zyn_SymFromAddr_t)GetProcAddress(dh, "SymFromAddr");
+                  zyn_StackWalk64_t pStackWalk64 = (zyn_StackWalk64_t)GetProcAddress(dh, "StackWalk64");
+                  zyn_SymSetOptions_t pSymSetOptions = (zyn_SymSetOptions_t)GetProcAddress(dh, "SymSetOptions");
+                  zyn_SymFunctionTableAccess64_t pFuncTable =
+                      (zyn_SymFunctionTableAccess64_t)GetProcAddress(dh, "SymFunctionTableAccess64");
+                  zyn_SymGetModuleBase64_t pModBase =
+                      (zyn_SymGetModuleBase64_t)GetProcAddress(dh, "SymGetModuleBase64");
+                  if(pSymInitialize && pSymFromAddr && pStackWalk64 && pFuncTable && pModBase) {
+                      HANDLE proc = GetCurrentProcess();
+                      HANDLE thr  = GetCurrentThread();
+                      if(pSymSetOptions)
+                          pSymSetOptions(0x2); /* SYMOPT_UNDNAME */
+                      pSymInitialize(proc, NULL, TRUE);
+                      CONTEXT ctx = *ep->ContextRecord;
+                      STACKFRAME64 frame;
+                      memset(&frame, 0, sizeof(frame));
+                      frame.AddrPC.Offset    = ctx.Eip;
+                      frame.AddrPC.Mode      = AddrModeFlat;
+                      frame.AddrFrame.Offset = ctx.Ebp;
+                      frame.AddrFrame.Mode   = AddrModeFlat;
+                      frame.AddrStack.Offset = ctx.Esp;
+                      frame.AddrStack.Mode   = AddrModeFlat;
+                      for(int i = 0; i < 25; i++) {
+                          if(!pStackWalk64(0x14c, proc, thr, &frame, &ctx, NULL,
+                                           (void *)pFuncTable, (void *)pModBase, NULL))
+                              break;
+                          if(frame.AddrPC.Offset == 0)
+                              break;
+                          union { SYMBOL_INFO s; char pad[sizeof(SYMBOL_INFO) + 300]; } u;
+                          memset(&u, 0, sizeof(u));
+                          u.s.SizeOfStruct = sizeof(SYMBOL_INFO);
+                          u.s.MaxNameLen   = 299;
+                          DWORD64 disp = 0;
+                          unsigned long pc = (unsigned long)frame.AddrPC.Offset;
+                          if(pSymFromAddr(proc, frame.AddrPC.Offset, &disp, &u.s))
+                              fprintf(stderr, "[CRASH]  #%d %s +0x%lX (0x%08lX)\n",
+                                      i, u.s.Name, (unsigned long)disp, pc);
+                          else
+                              fprintf(stderr, "[CRASH]  #%d 0x%08lX (offset 0x%lX)\n", i, pc, pc - base);
+                      }
+                  }
+              }
+              fflush(stderr);
+              return EXCEPTION_EXECUTE_HANDLER;
+          }
+          #endif
+          CRASHEOF
+          sed -i 's|^GUI::ui_handle_t gui;$|#include "crashreport.h"\nGUI::ui_handle_t gui;|' src/main.cpp
+          sed -i 's|^    int noui = 0;$|    int noui = 0;\n#ifdef WIN32\n    SetUnhandledExceptionFilter(zyn_crash_handler);\n#endif|' src/main.cpp
+          grep -n "crashreport\|zyn_crash_handler" src/main.cpp
+          sed -i '0,/uToB->write("\/freeze_state","");/s|uToB->write("/freeze_state","");|&\n    fprintf(stderr, "[SAVE] asking backend to freeze\\n");|' src/Misc/MiddleWare.cpp
+          sed -i '0,/assert(tries < 10000);/s|assert(tries < 10000);|fprintf(stderr, "[SAVE] wait finished after %d tries (10000 = backend never answered)\\n", tries);\n    assert(tries < 10000);|' src/Misc/MiddleWare.cpp
+          sed -i 's|^\( *\)int res = master->part\[npart\]->saveXML(fname.c_str());|\1fprintf(stderr, "[SAVE] writing file: %s\\n", fname.c_str());\n\1int res = master->part[npart]->saveXML(fname.c_str());\n\1fprintf(stderr, "[SAVE] write finished, result %d\\n", res);|' src/Misc/MiddleWare.cpp
+          grep -n "\[SAVE\]" src/Misc/MiddleWare.cpp
           sed -i 's|o->color( FL_CYAN );|o->color( fl_rgb_color(12, 52, 40) );|' src/UI/guimain.cpp
           sed -i 's|^    Fl::add_handler(kb_shortcut_handler);$|    Fl::background(14, 18, 24);\n    Fl::background2(22, 30, 40);\n    Fl::foreground(215, 240, 230);\n    Fl::set_color(FL_SELECTION_COLOR, 0, 200, 110);\n    Fl::add_handler(kb_shortcut_handler);|' src/UI/guimain.cpp
           sed -i 's|pdialcolor(10, 14, 20);|pdialcolor(6, 24, 14);|; s|fl_color(20, 90, 160);|fl_color(30, 150, 80);|; s|pdialcolor(25, 35, 48);|pdialcolor(16, 84, 48);|; s|pdialcolor(12, 18, 26);|pdialcolor(22, 110, 64);|; s|pdialcolor(80, 170, 255);|pdialcolor(200, 255, 220);|' src/UI/WidgetPDial.cpp
