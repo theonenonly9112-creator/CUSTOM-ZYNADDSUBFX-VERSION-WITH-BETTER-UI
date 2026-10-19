@@ -97,57 +97,76 @@ jobs:
           typedef void *  (WINAPI *zyn_SymFunctionTableAccess64_t)(HANDLE, DWORD64);
           typedef DWORD64 (WINAPI *zyn_SymGetModuleBase64_t)(HANDLE, DWORD64);
 
+          static CONTEXT       zyn_crash_ctx;
+          static unsigned long zyn_crash_base = 0;
+
+          /* runs on a fresh thread, because the crashed thread may have no stack left */
+          static DWORD WINAPI zyn_walk_thread(LPVOID param)
+          {
+              HANDLE thr = (HANDLE)param;
+              HMODULE dh = LoadLibraryA("dbghelp.dll");
+              if(!dh)
+                  return 0;
+              zyn_SymInitialize_t pSymInitialize = (zyn_SymInitialize_t)GetProcAddress(dh, "SymInitialize");
+              zyn_SymFromAddr_t pSymFromAddr = (zyn_SymFromAddr_t)GetProcAddress(dh, "SymFromAddr");
+              zyn_StackWalk64_t pStackWalk64 = (zyn_StackWalk64_t)GetProcAddress(dh, "StackWalk64");
+              zyn_SymSetOptions_t pSymSetOptions = (zyn_SymSetOptions_t)GetProcAddress(dh, "SymSetOptions");
+              zyn_SymFunctionTableAccess64_t pFuncTable =
+                  (zyn_SymFunctionTableAccess64_t)GetProcAddress(dh, "SymFunctionTableAccess64");
+              zyn_SymGetModuleBase64_t pModBase =
+                  (zyn_SymGetModuleBase64_t)GetProcAddress(dh, "SymGetModuleBase64");
+              if(!(pSymInitialize && pSymFromAddr && pStackWalk64 && pFuncTable && pModBase))
+                  return 0;
+              HANDLE proc = GetCurrentProcess();
+              if(pSymSetOptions)
+                  pSymSetOptions(0x2); /* SYMOPT_UNDNAME */
+              pSymInitialize(proc, NULL, TRUE);
+              CONTEXT ctx = zyn_crash_ctx;
+              STACKFRAME64 frame;
+              memset(&frame, 0, sizeof(frame));
+              frame.AddrPC.Offset    = ctx.Eip;
+              frame.AddrPC.Mode      = AddrModeFlat;
+              frame.AddrFrame.Offset = ctx.Ebp;
+              frame.AddrFrame.Mode   = AddrModeFlat;
+              frame.AddrStack.Offset = ctx.Esp;
+              frame.AddrStack.Mode   = AddrModeFlat;
+              for(int i = 0; i < 30; i++) {
+                  if(!pStackWalk64(0x14c, proc, thr, &frame, &ctx, NULL,
+                                   (void *)pFuncTable, (void *)pModBase, NULL))
+                      break;
+                  if(frame.AddrPC.Offset == 0)
+                      break;
+                  union { SYMBOL_INFO s; char pad[sizeof(SYMBOL_INFO) + 300]; } u;
+                  memset(&u, 0, sizeof(u));
+                  u.s.SizeOfStruct = sizeof(SYMBOL_INFO);
+                  u.s.MaxNameLen   = 299;
+                  DWORD64 disp = 0;
+                  unsigned long pc = (unsigned long)frame.AddrPC.Offset;
+                  if(pSymFromAddr(proc, frame.AddrPC.Offset, &disp, &u.s))
+                      fprintf(stderr, "[CRASH]  #%d %s +0x%lX (0x%08lX)\n",
+                              i, u.s.Name, (unsigned long)disp, pc);
+                  else
+                      fprintf(stderr, "[CRASH]  #%d 0x%08lX (offset 0x%lX)\n", i, pc, pc - zyn_crash_base);
+              }
+              fflush(stderr);
+              return 0;
+          }
+
           static LONG WINAPI zyn_crash_handler(EXCEPTION_POINTERS *ep)
           {
               unsigned long base = (unsigned long)GetModuleHandle(NULL);
               unsigned long addr = (unsigned long)ep->ExceptionRecord->ExceptionAddress;
-              fprintf(stderr, "\n[CRASH] exception code 0x%08lX at 0x%08lX (exe base 0x%08lX, offset 0x%lX)\n",
-                      (unsigned long)ep->ExceptionRecord->ExceptionCode, addr, base, addr - base);
-              HMODULE dh = LoadLibraryA("dbghelp.dll");
-              if(dh) {
-                  zyn_SymInitialize_t pSymInitialize = (zyn_SymInitialize_t)GetProcAddress(dh, "SymInitialize");
-                  zyn_SymFromAddr_t pSymFromAddr = (zyn_SymFromAddr_t)GetProcAddress(dh, "SymFromAddr");
-                  zyn_StackWalk64_t pStackWalk64 = (zyn_StackWalk64_t)GetProcAddress(dh, "StackWalk64");
-                  zyn_SymSetOptions_t pSymSetOptions = (zyn_SymSetOptions_t)GetProcAddress(dh, "SymSetOptions");
-                  zyn_SymFunctionTableAccess64_t pFuncTable =
-                      (zyn_SymFunctionTableAccess64_t)GetProcAddress(dh, "SymFunctionTableAccess64");
-                  zyn_SymGetModuleBase64_t pModBase =
-                      (zyn_SymGetModuleBase64_t)GetProcAddress(dh, "SymGetModuleBase64");
-                  if(pSymInitialize && pSymFromAddr && pStackWalk64 && pFuncTable && pModBase) {
-                      HANDLE proc = GetCurrentProcess();
-                      HANDLE thr  = GetCurrentThread();
-                      if(pSymSetOptions)
-                          pSymSetOptions(0x2); /* SYMOPT_UNDNAME */
-                      pSymInitialize(proc, NULL, TRUE);
-                      CONTEXT ctx = *ep->ContextRecord;
-                      STACKFRAME64 frame;
-                      memset(&frame, 0, sizeof(frame));
-                      frame.AddrPC.Offset    = ctx.Eip;
-                      frame.AddrPC.Mode      = AddrModeFlat;
-                      frame.AddrFrame.Offset = ctx.Ebp;
-                      frame.AddrFrame.Mode   = AddrModeFlat;
-                      frame.AddrStack.Offset = ctx.Esp;
-                      frame.AddrStack.Mode   = AddrModeFlat;
-                      for(int i = 0; i < 25; i++) {
-                          if(!pStackWalk64(0x14c, proc, thr, &frame, &ctx, NULL,
-                                           (void *)pFuncTable, (void *)pModBase, NULL))
-                              break;
-                          if(frame.AddrPC.Offset == 0)
-                              break;
-                          union { SYMBOL_INFO s; char pad[sizeof(SYMBOL_INFO) + 300]; } u;
-                          memset(&u, 0, sizeof(u));
-                          u.s.SizeOfStruct = sizeof(SYMBOL_INFO);
-                          u.s.MaxNameLen   = 299;
-                          DWORD64 disp = 0;
-                          unsigned long pc = (unsigned long)frame.AddrPC.Offset;
-                          if(pSymFromAddr(proc, frame.AddrPC.Offset, &disp, &u.s))
-                              fprintf(stderr, "[CRASH]  #%d %s +0x%lX (0x%08lX)\n",
-                                      i, u.s.Name, (unsigned long)disp, pc);
-                          else
-                              fprintf(stderr, "[CRASH]  #%d 0x%08lX (offset 0x%lX)\n", i, pc, pc - base);
-                      }
-                  }
-              }
+              zyn_crash_base = base;
+              zyn_crash_ctx  = *ep->ContextRecord;
+              fprintf(stderr, "\n[CRASH] exception code 0x%08lX at 0x%08lX (exe base 0x%08lX)\n",
+                      (unsigned long)ep->ExceptionRecord->ExceptionCode, addr, base);
+              fflush(stderr);
+              HANDLE self = NULL;
+              DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
+                              &self, 0, FALSE, DUPLICATE_SAME_ACCESS);
+              HANDLE t = CreateThread(NULL, 0, zyn_walk_thread, (LPVOID)self, 0, NULL);
+              if(t)
+                  WaitForSingleObject(t, 30000);
               fflush(stderr);
               return EXCEPTION_EXECUTE_HANDLER;
           }
@@ -160,6 +179,10 @@ jobs:
           sed -i '0,/assert(tries < 10000);/s|assert(tries < 10000);|fprintf(stderr, "[SAVE] wait finished after %d tries (10000 = backend never answered)\\n", tries);\n    assert(tries < 10000);|' src/Misc/MiddleWare.cpp
           sed -i 's|^\( *\)int res = master->part\[npart\]->saveXML(fname.c_str());|\1fprintf(stderr, "[SAVE] writing file: %s\\n", fname.c_str());\n\1int res = master->part[npart]->saveXML(fname.c_str());\n\1fprintf(stderr, "[SAVE] write finished, result %d\\n", res);|' src/Misc/MiddleWare.cpp
           grep -n "\[SAVE\]" src/Misc/MiddleWare.cpp
+          sed -i 's|^filename=fl_file_chooser("Save:","({\*.xiz})",NULL,0);$|&\nfprintf(stderr, "[SAVE] UI: chooser returned\\\\n");|' src/UI/MasterUI.fl
+          sed -i 's|^filename=fl_filename_setext(filename,".xiz");$|&\nfprintf(stderr, "[SAVE] UI: file name is %s\\\\n", filename);|' src/UI/MasterUI.fl
+          sed -i 's|^osc->write("/save_xiz", "is", npart, filename);$|fprintf(stderr, "[SAVE] UI: sending save request\\\\n");\n&\nfprintf(stderr, "[SAVE] UI: request sent\\\\n");|' src/UI/MasterUI.fl
+          grep -n "\[SAVE\] UI" src/UI/MasterUI.fl
           sed -i 's|o->color( FL_CYAN );|o->color( fl_rgb_color(12, 52, 40) );|' src/UI/guimain.cpp
           sed -i 's|^    Fl::add_handler(kb_shortcut_handler);$|    Fl::background(14, 18, 24);\n    Fl::background2(22, 30, 40);\n    Fl::foreground(215, 240, 230);\n    Fl::set_color(FL_SELECTION_COLOR, 0, 200, 110);\n    Fl::add_handler(kb_shortcut_handler);|' src/UI/guimain.cpp
           sed -i 's|pdialcolor(10, 14, 20);|pdialcolor(6, 24, 14);|; s|fl_color(20, 90, 160);|fl_color(30, 150, 80);|; s|pdialcolor(25, 35, 48);|pdialcolor(16, 84, 48);|; s|pdialcolor(12, 18, 26);|pdialcolor(22, 110, 64);|; s|pdialcolor(80, 170, 255);|pdialcolor(200, 255, 220);|' src/UI/WidgetPDial.cpp
