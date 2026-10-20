@@ -21,6 +21,7 @@ jobs:
             tar
             bzip2
             zip
+            python
             mingw-w64-i686-toolchain
             mingw-w64-i686-cmake
             mingw-w64-i686-ninja
@@ -183,6 +184,184 @@ jobs:
           sed -i 's|^filename=fl_filename_setext(filename,".xiz");$|&\nfprintf(stderr, "[SAVE] UI: file name is %s\\\\n", filename);|' src/UI/MasterUI.fl
           sed -i 's|^osc->write("/save_xiz", "is", npart, filename);$|fprintf(stderr, "[SAVE] UI: sending save request\\\\n");\n&\nfprintf(stderr, "[SAVE] UI: request sent\\\\n");|' src/UI/MasterUI.fl
           grep -n "\[SAVE\] UI" src/UI/MasterUI.fl
+          cat > DPF/distrho/src/zyn_vst_editor.h <<'VSTEOF'
+          #ifndef ZYN_VST_EDITOR_H_INCLUDED
+          #define ZYN_VST_EDITOR_H_INCLUDED
+
+          #if DISTRHO_OS_WINDOWS
+
+          #ifndef WIN32_LEAN_AND_MEAN
+          # define WIN32_LEAN_AND_MEAN
+          #endif
+          #include <windows.h>
+          #include <stdio.h>
+          #include <string.h>
+
+          static void zyn_editor_anchor() {}
+
+          static HMODULE zyn_this_module()
+          {
+              HMODULE hm = NULL;
+              GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                 (LPCSTR)&zyn_editor_anchor, &hm);
+              return hm;
+          }
+
+          static LRESULT CALLBACK zyn_panel_proc(HWND h, UINT m, WPARAM w, LPARAM l)
+          {
+              switch(m) {
+              case WM_ERASEBKGND: {
+                  RECT r;
+                  GetClientRect(h, &r);
+                  HBRUSH b = CreateSolidBrush(RGB(14, 18, 24));
+                  FillRect((HDC)w, &r, b);
+                  DeleteObject(b);
+                  return 1;
+              }
+              case WM_PAINT: {
+                  PAINTSTRUCT ps;
+                  HDC dc = BeginPaint(h, &ps);
+                  SetBkMode(dc, TRANSPARENT);
+                  SetTextColor(dc, RGB(0, 230, 120));
+                  const char *t1 = "ZynAddSubFX editor";
+                  const char *t2 = "The editor opens in its own window.";
+                  const char *t3 = "Close this panel to close the editor.";
+                  TextOutA(dc, 12, 12, t1, (int)strlen(t1));
+                  TextOutA(dc, 12, 40, t2, (int)strlen(t2));
+                  TextOutA(dc, 12, 64, t3, (int)strlen(t3));
+                  EndPaint(h, &ps);
+                  return 0;
+              }
+              }
+              return DefWindowProcA(h, m, w, l);
+          }
+
+          class ZynExtEditor
+          {
+          public:
+              ZynExtEditor() : fHwnd(NULL), fProc(NULL)
+              {
+                  fRect.top    = 0;
+                  fRect.left   = 0;
+                  fRect.bottom = 525;
+                  fRect.right  = 390;
+              }
+
+              ~ZynExtEditor()
+              {
+                  close();
+              }
+
+              ERect *rect()
+              {
+                  return &fRect;
+              }
+
+              void open(void *parent, int oscPort)
+              {
+                  close();
+
+                  HMODULE mod = zyn_this_module();
+
+                  WNDCLASSA wc;
+                  memset(&wc, 0, sizeof(wc));
+                  wc.lpfnWndProc   = zyn_panel_proc;
+                  wc.hInstance     = (HINSTANCE)mod;
+                  wc.hCursor       = LoadCursorA(NULL, IDC_ARROW);
+                  wc.lpszClassName = "ZynRemotePanel";
+                  RegisterClassA(&wc); // fails harmlessly if it already exists
+
+                  fHwnd = CreateWindowExA(0, "ZynRemotePanel", "", WS_CHILD | WS_VISIBLE,
+                                          0, 0, 390, 525, (HWND)parent, NULL, (HINSTANCE)mod, NULL);
+
+                  launch(mod, oscPort);
+              }
+
+              void close()
+              {
+                  if(fProc) {
+                      TerminateProcess(fProc, 0);
+                      WaitForSingleObject(fProc, 1000);
+                      CloseHandle(fProc);
+                      fProc = NULL;
+                  }
+                  if(fHwnd) {
+                      DestroyWindow(fHwnd);
+                      fHwnd = NULL;
+                  }
+              }
+
+          private:
+              HWND   fHwnd;
+              HANDLE fProc;
+              ERect  fRect;
+
+              void launch(HMODULE mod, int oscPort)
+              {
+                  char dir[MAX_PATH + 4];
+                  memset(dir, 0, sizeof(dir));
+                  GetModuleFileNameA(mod, dir, MAX_PATH);
+                  char *slash = strrchr(dir, '\\');
+                  if(slash)
+                      slash[1] = '\0';
+                  else
+                      dir[0] = '\0';
+
+                  char exe[MAX_PATH + 64];
+                  snprintf(exe, sizeof(exe), "%szynaddsubfx-ext-gui.exe", dir);
+
+                  char cmd[2 * MAX_PATH + 160];
+                  snprintf(cmd, sizeof(cmd), "\"%s\" --title \"ZynAddSubFX\" osc.udp://localhost:%d/",
+                           exe, oscPort);
+
+                  STARTUPINFOA si;
+                  memset(&si, 0, sizeof(si));
+                  si.cb = sizeof(si);
+                  PROCESS_INFORMATION pi;
+                  memset(&pi, 0, sizeof(pi));
+
+                  if(CreateProcessA(exe, cmd, NULL, NULL, FALSE, 0, NULL, dir[0] ? dir : NULL, &si, &pi)) {
+                      fProc = pi.hProcess;
+                      CloseHandle(pi.hThread);
+                  } else {
+                      MessageBoxA(NULL, "Could not start zynaddsubfx-ext-gui.exe.\nIt must be in the same folder as the plugin file.",
+                                  "ZynAddSubFX", MB_OK);
+                  }
+              }
+          };
+
+          #endif // DISTRHO_OS_WINDOWS
+          #endif // ZYN_VST_EDITOR_H_INCLUDED
+          VSTEOF
+          python3 - <<'PYEOF'
+          p = 'DPF/distrho/src/DistrhoPluginVST.cpp'
+          s = open(p).read()
+          def rep(old, new):
+              global s
+              assert old in s, 'anchor not found: ' + old[:40]
+              s = s.replace(old, new, 1)
+          rep('\nSTART_NAMESPACE_DISTRHO\n', '\n#include "zyn_vst_editor.h"\n\nSTART_NAMESPACE_DISTRHO\n')
+          rep('#if DISTRHO_PLUGIN_WANT_STATE\n        case effGetChunk:', '''#if DISTRHO_OS_WINDOWS && ! DISTRHO_PLUGIN_HAS_UI
+                  case effEditGetRect:
+                      *(ERect**)ptr = zynEditor.rect();
+                      return 1;
+
+                  case effEditOpen:
+                      zynEditor.open(ptr, int(fPlugin.getParameterValue(kParamOscPort) + 0.5f));
+                      return 1;
+
+                  case effEditClose:
+                      zynEditor.close();
+                      return 1;
+          #endif
+
+          #if DISTRHO_PLUGIN_WANT_STATE
+                  case effGetChunk:''')
+          rep('    // UI stuff\n#if DISTRHO_PLUGIN_HAS_UI\n    UIVst* fVstUI;', '    // UI stuff\n#if DISTRHO_OS_WINDOWS && ! DISTRHO_PLUGIN_HAS_UI\n    ZynExtEditor zynEditor;\n#endif\n#if DISTRHO_PLUGIN_HAS_UI\n    UIVst* fVstUI;')
+          rep('#if DISTRHO_PLUGIN_HAS_UI\n    effect->flags |= effFlagsHasEditor;\n#endif', '#if DISTRHO_PLUGIN_HAS_UI || DISTRHO_OS_WINDOWS\n    effect->flags |= effFlagsHasEditor;\n#endif')
+          open(p, 'w').write(s)
+          print('vst editor patch applied')
+          PYEOF
           sed -i 's|o->color( FL_CYAN );|o->color( fl_rgb_color(12, 52, 40) );|' src/UI/guimain.cpp
           sed -i 's|^    Fl::add_handler(kb_shortcut_handler);$|    Fl::background(14, 18, 24);\n    Fl::background2(22, 30, 40);\n    Fl::foreground(215, 240, 230);\n    Fl::set_color(FL_SELECTION_COLOR, 0, 200, 110);\n    Fl::add_handler(kb_shortcut_handler);|' src/UI/guimain.cpp
           sed -i 's|pdialcolor(10, 14, 20);|pdialcolor(6, 24, 14);|; s|fl_color(20, 90, 160);|fl_color(30, 150, 80);|; s|pdialcolor(25, 35, 48);|pdialcolor(16, 84, 48);|; s|pdialcolor(12, 18, 26);|pdialcolor(22, 110, 64);|; s|pdialcolor(80, 170, 255);|pdialcolor(200, 255, 220);|' src/UI/WidgetPDial.cpp
@@ -216,7 +395,7 @@ jobs:
         run: |
           cd zynaddsubfx-3.0.3/build
           set +e
-          ninja -k 0 ZynAddSubFX_vst > ../../build-vst.log 2>&1
+          ninja -k 0 ZynAddSubFX_vst zynaddsubfx-ext-gui > ../../build-vst.log 2>&1
           STATUS=$?
           echo "================ VST ERROR SUMMARY ================"
           grep -n -E "error:|FAILED:|undefined reference|fatal error" ../../build-vst.log | head -40
@@ -246,6 +425,11 @@ jobs:
             mkdir -p out/vst
             cp "$VST" out/vst/
             copydeps out/vst/ZynAddSubFX.dll out/vst
+          fi
+          GUIEXE=$(find zynaddsubfx-3.0.3/build -name zynaddsubfx-ext-gui.exe | head -n 1)
+          if [ -n "$VST" ] && [ -n "$GUIEXE" ]; then
+            cp "$GUIEXE" out/vst/
+            copydeps out/vst/zynaddsubfx-ext-gui.exe out/vst
           fi
           cp -r zynaddsubfx-3.0.3/instruments out/ || true
           cp -r zynaddsubfx-3.0.3/pixmaps out/ || true
