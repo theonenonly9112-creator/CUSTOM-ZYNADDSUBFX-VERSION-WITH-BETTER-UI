@@ -394,7 +394,7 @@ jobs:
           decl {\#include <FL/Fl_Native_File_Chooser.H>} {private local
           } 
 
-          decl {static char *zyn_file_chooser(const char *message, const char *pattern, const char *fname, int relative)
+          decl {char *zyn_file_chooser(const char *message, const char *pattern, const char *fname, int relative)
           {
               if(strncmp(message, "Save", 4) && strncmp(message, "Record", 6) && strncmp(message, "Export", 6))
                   return (fl_file_chooser)(message, pattern, fname, relative);
